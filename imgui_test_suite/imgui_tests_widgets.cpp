@@ -3442,6 +3442,87 @@ void RegisterTests_Widgets(ImGuiTestEngine* e)
         ImGui::End();
     };
 
+    // ## Test TreeNodeGetOpen() reporting the state of nodes that have not been interacted with yet (#9569)
+    t = IM_REGISTER_TEST(e, "widgets", "widgets_treenode_get_open");
+    struct TreeNodeGetOpenVars
+    {
+        bool    ForceClose = false;
+        bool    RetCollapsing = false, QueryCollapsing = false, QueryCollapsingLegacy = false;
+        bool    RetLeaf = false, QueryLeaf = false;
+        bool    RetStorageOverride = false, QueryStorageOverride = false;
+        bool    RetClick = false, QueryClick = false;
+    };
+    t->SetVarsDataType<TreeNodeGetOpenVars>();
+    t->GuiFunc = [](ImGuiTestContext* ctx)
+    {
+        TreeNodeGetOpenVars& vars = ctx->GetVars<TreeNodeGetOpenVars>();
+
+        ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Appearing);
+        ImGui::Begin("Test Window", NULL, ImGuiWindowFlags_NoSavedSettings);
+
+        if (vars.ForceClose)
+            ImGui::SetNextItemOpen(false);
+        vars.RetCollapsing = ImGui::CollapsingHeader("Collapsing", ImGuiTreeNodeFlags_DefaultOpen);
+        vars.QueryCollapsing = ImGui::TreeNodeGetOpen(ImGui::GetID("Collapsing"), ImGuiTreeNodeFlags_DefaultOpen);
+        vars.QueryCollapsingLegacy = ImGui::TreeNodeGetOpen(ImGui::GetID("Collapsing"));  // Old 1-arg call, unchanged behavior
+
+        vars.RetLeaf = ImGui::TreeNodeEx("Leaf", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+        vars.QueryLeaf = ImGui::TreeNodeGetOpen(ImGui::GetID("Leaf"), ImGuiTreeNodeFlags_Leaf);
+
+        // Same query, but the state is stored under an explicit id that differs from the item id.
+        const ImGuiID storage_override_id = ImGui::GetID("StorageOverride");
+        if (vars.ForceClose)
+            ImGui::SetNextItemOpen(false);
+        ImGui::SetNextItemStorageID(storage_override_id);
+        vars.RetStorageOverride = ImGui::CollapsingHeader("Override Label", ImGuiTreeNodeFlags_DefaultOpen);
+        vars.QueryStorageOverride = ImGui::TreeNodeGetOpen(storage_override_id, ImGuiTreeNodeFlags_DefaultOpen);
+
+        // A node that the test will really click on.
+        vars.RetClick = ImGui::CollapsingHeader("Clickable", ImGuiTreeNodeFlags_DefaultOpen);
+        vars.QueryClick = ImGui::TreeNodeGetOpen(ImGui::GetID("Clickable"), ImGuiTreeNodeFlags_DefaultOpen);
+
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx)
+    {
+        TreeNodeGetOpenVars& vars = ctx->GetVars<TreeNodeGetOpenVars>();
+        ctx->SetRef("Test Window");
+
+        // Before any interaction, and with nothing written into the storage, the query must agree with the widget itself.
+        for (int frame_n = 0; frame_n < 3; frame_n++)
+        {
+            ctx->Yield();
+            IM_CHECK_EQ(vars.RetCollapsing, true);
+            IM_CHECK_EQ(vars.RetLeaf, true);
+            IM_CHECK_EQ(vars.QueryCollapsing, vars.RetCollapsing);
+            IM_CHECK_EQ(vars.QueryLeaf, vars.RetLeaf);
+            IM_CHECK_EQ(vars.QueryCollapsingLegacy, false);
+            IM_CHECK_EQ(vars.RetStorageOverride, true);
+            IM_CHECK_EQ(vars.QueryStorageOverride, vars.RetStorageOverride);
+            IM_CHECK_EQ(vars.RetClick, true);
+            IM_CHECK_EQ(vars.QueryClick, vars.RetClick);
+        }
+
+        // An explicitly stored state still wins over the flag default.
+        vars.ForceClose = true;
+        ctx->Yield();
+        IM_CHECK_EQ(vars.RetCollapsing, false);
+        IM_CHECK_EQ(vars.QueryCollapsing, false);
+        IM_CHECK_EQ(vars.RetStorageOverride, false);
+        IM_CHECK_EQ(vars.QueryStorageOverride, false);
+
+        // Real mouse clicks write into the storage; the query must follow it in both directions.
+        ctx->ItemClick("//Test Window/Clickable");
+        ctx->Yield();
+        IM_CHECK_EQ(vars.RetClick, false);
+        IM_CHECK_EQ(vars.QueryClick, false);
+
+        ctx->ItemClick("//Test Window/Clickable");
+        ctx->Yield();
+        IM_CHECK_EQ(vars.RetClick, true);
+        IM_CHECK_EQ(vars.QueryClick, true);
+    };
+
     // ## Test PlotLines() with a single value (#2387).
     t = IM_REGISTER_TEST(e, "widgets", "widgets_plot_lines_unexpected_input");
     t->GuiFunc = [](ImGuiTestContext* ctx)
